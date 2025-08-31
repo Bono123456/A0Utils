@@ -81,12 +81,6 @@ namespace A0Utils.Wpf.Models
             var matchedNsi = allNsi.Where(item => ParseHelpers.FindNsi(data, item.Name)).ToList();
             var remainingNsi = allNsi.Except(matchedNsi).ToList();
 
-            var licenseTypeResult = ParseHelpers.FindLicenseType(data);
-            if (licenseTypeResult.IsFailure)
-            {
-                return Result.Failure<(IEnumerable<UpdateModel> AllLicenses, IEnumerable<UpdateModel> FilteredLicenses)>(licenseTypeResult.Error);
-            }
-
             var prices = new List<UpdateModel>();
             var pResult = ParseHelpers.FindPrices(data);
             var allPrices = models.Where(x => x.Category == "Справочники цен").ToList();
@@ -116,6 +110,12 @@ namespace A0Utils.Wpf.Models
             var allLicenses = new List<UpdateModel>();
             allLicenses.AddRange(remainingNsi);
             allLicenses.AddRange(allPrices);
+
+            var licenseTypeResult = ParseHelpers.FindLicenseType(data);
+            if (licenseTypeResult.IsFailure)
+            {
+                return Result.Failure<(IEnumerable<UpdateModel> AllLicenses, IEnumerable<UpdateModel> FilteredLicenses)>(licenseTypeResult.Error);
+            }
 
             var a0 = models.Where(x => x.Key_type == licenseTypeResult.Value && x.Category == "A0" && licenseInfo.A0LicenseExpAt != default).ToList();
             var pir = models.Where(x => x.Key_type == licenseTypeResult.Value && x.Category == "ПИР" && licenseInfo.PIRLicenseExpAt != default).ToList();

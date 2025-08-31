@@ -25,7 +25,7 @@ namespace A0Utils.Wpf.Services
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Ошибка при поиске файла лицензии: {Error}", ex.Message);
+                Log.Error(ex, "Ошибка при поиске файла лицензии");
                 return string.Empty;
             }
         }
@@ -48,7 +48,7 @@ namespace A0Utils.Wpf.Services
             }
             catch (UnauthorizedAccessException ex)
             {
-                Log.Error(ex, "Доступ запрещен");
+                Log.Error(ex, "Отсутсвуют разрешения на доступ к файлу");
                 return [];
             }
             catch (Exception ex)
@@ -60,54 +60,54 @@ namespace A0Utils.Wpf.Services
 
         public Result CopyToAllFolders(string downloadLicensePath, IEnumerable<string> destinationDirectories)
         {
-            var failures = new List<string>();
+            var errors = new List<string>();
             foreach (var destinationDir in destinationDirectories)
             {
                 try
                 {
-                    if (File.Exists(downloadLicensePath))
+                    string destinationFile = Path.Combine(destinationDir, Path.GetFileName(downloadLicensePath));
+
+                    if (File.Exists(destinationFile))
                     {
                         try
                         {
-                            var attributes = File.GetAttributes(downloadLicensePath);
+                            var attributes = File.GetAttributes(destinationFile);
                             if (attributes.HasFlag(FileAttributes.ReadOnly))
                             {
                                 attributes &= ~FileAttributes.ReadOnly; // Убираем атрибут ReadOnly
-                                File.SetAttributes(downloadLicensePath, attributes);
+                                File.SetAttributes(destinationFile, attributes);
                             }
                         }
                         catch (Exception ex)
                         {
                             Log.Error(ex, "Не удалось изменить атрибуты файла");
-                            failures.Add($"Не удалось изменить атрибуты файла: {ex.Message}");
+                            errors.Add("Не удалось изменить атрибуты файла. Попробуйте запустить программу с правами администратора");
                         }
                     }
-
-                    string destinationFile = Path.Combine(destinationDir, Path.GetFileName(downloadLicensePath));
 
                     File.Copy(downloadLicensePath, destinationFile, true); // true allows overwriting
                 }
                 catch (UnauthorizedAccessException ex)
                 {
-                    Log.Error(ex, "Не хватает разрешений на запись файла");
-                    failures.Add($"Не хватает разрешений на запись файла: {ex.Message}");
+                    Log.Error(ex, "Отсутствует разрешение на запись файла");
+                    errors.Add("Отсутствует разрешение на запись файла. Попробуйте запустить программу с правами администратора");
                 }
                 catch (IOException ex)
                 {
-                    Log.Error(ex, "Фаил занят");
-                    failures.Add($"Фаил занят: {ex.Message}");
+                    Log.Error(ex, "Фаил лицензии занят");
+                    errors.Add("Фаил лицензии занят. Попробуйте запустить программу с правами администратора");
                 }
                 catch (Exception ex)
                 {
-                    Log.Error(ex, "Ошибка при копировании лицензии");
-                   failures.Add($"Ошибка при копировании лицензии {ex.Message}");
+                    Log.Error(ex, "Не удалось скопировать лицензию");
+                   errors.Add("Не удалось скопировать лицензию. См. логи");
                 }
             }
 
-            if (failures.Count > 0)
+            if (errors.Count > 0)
             {
-                var list = string.Join(", ", failures);
-                return Result.Failure($"Ошибки при копировании лицензий: {list}");
+                var errorMessage = string.Join(", ", errors);
+                return Result.Failure($"При копировании возникли ошибки: {errorMessage}");
             }
 
             return Result.Success();

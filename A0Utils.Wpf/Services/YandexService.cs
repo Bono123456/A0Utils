@@ -273,7 +273,7 @@ namespace A0Utils.Wpf.Services
         {
             try
             {
-                if (!licenseName.EndsWith(".ISL"))
+                if (!licenseName.EndsWith(".ISL", StringComparison.OrdinalIgnoreCase))
                 {
                     licenseName = licenseName + ".ISL";
                 }
@@ -283,7 +283,7 @@ namespace A0Utils.Wpf.Services
                     return Result.Failure<string>("Лицензия должна быть в формате .ISL");
                 }
 
-                var license = yandexResource.Items.FirstOrDefault(x => x.Name == licenseName);
+                var license = yandexResource.Items.FirstOrDefault(x => x.Name.Equals(licenseName, StringComparison.OrdinalIgnoreCase));
                 if (license == null)
                 {
                     Log.Error($"Лицензия {licenseName} не найдена");
@@ -328,7 +328,7 @@ namespace A0Utils.Wpf.Services
         {
             try
             {
-                if (licenseName.EndsWith(".ISL"))
+                if (licenseName.EndsWith(".ISL", StringComparison.OrdinalIgnoreCase))
                 {
                     licenseName = licenseName.Substring(0, licenseName.Length - 4) + ".ild";
                 }
@@ -342,7 +342,7 @@ namespace A0Utils.Wpf.Services
                     return Result.Failure<string>("Фаил должен быть в формате .ild");
                 }
 
-                var description = yandexResource.Items.FirstOrDefault(x => x.Name == licenseName);
+                var description = yandexResource.Items.FirstOrDefault(x => x.Name.Equals(licenseName, StringComparison.OrdinalIgnoreCase));
                 if (description == null)
                 {
                     Log.Error($"Фаил с описанием лицензий {licenseName} не найден");
@@ -386,7 +386,7 @@ namespace A0Utils.Wpf.Services
         {
             try
             {
-                if (licenseName.EndsWith(".ISL"))
+                if (licenseName.EndsWith(".ISL", StringComparison.OrdinalIgnoreCase))
                 {
                     licenseName = licenseName.Substring(0, licenseName.Length - 4) + ".ild";
                 }
@@ -400,7 +400,7 @@ namespace A0Utils.Wpf.Services
                     return Result.Failure<LicenseInfoModel>("Фаил должен быть в формате .ild");
                 }
 
-                var description = yandexResource.Items.FirstOrDefault(x => x.Name == licenseName);
+                var description = yandexResource.Items.FirstOrDefault(x => x.Name.Equals(licenseName, StringComparison.OrdinalIgnoreCase));
                 if (description == null)
                 {
                     Log.Error($"Фаил с описанием лицензий {licenseName} не найден");

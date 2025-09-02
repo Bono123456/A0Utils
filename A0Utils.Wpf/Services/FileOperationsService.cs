@@ -5,7 +5,6 @@ using Serilog;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 
 namespace A0Utils.Wpf.Services
 {
@@ -13,33 +12,11 @@ namespace A0Utils.Wpf.Services
     {
         public bool IsFolderExist(string path) => System.IO.Directory.Exists(path);
 
-        public string FindLicFile(string path)
-        {
-            try
-            {
-                string searchPattern = "*.ISL";
-                return Directory
-                    .EnumerateFiles(path, searchPattern)
-                    .Select(Path.GetFileName)
-                    .FirstOrDefault();
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Ошибка при поиске файла лицензии");
-                return string.Empty;
-            }
-        }
-
         public IEnumerable<LicenseModel> FindAllLicFiles(string path)
         {
             try
             {
-                string searchPattern = "*.ISL";
-                var fullPaths = Directory
-                    .EnumerateFiles(path, searchPattern, SearchOption.AllDirectories)
-                    .ToList();
-
-                return fullPaths.MapToLicenseModel();
+                return GetAllIslFiles(path).MapToLicenseModel();
             }
             catch (DirectoryNotFoundException ex)
             {
@@ -111,6 +88,17 @@ namespace A0Utils.Wpf.Services
             }
 
             return Result.Success();
+        }
+
+        private static IEnumerable<string> GetAllIslFiles(string rootPath)
+        {
+            foreach (var file in Directory.EnumerateFiles(rootPath, "*", SearchOption.AllDirectories))
+            {
+                if (string.Equals(Path.GetExtension(file), ".isl", StringComparison.OrdinalIgnoreCase))
+                {
+                    yield return file; 
+                }
+            }
         }
     }
 }

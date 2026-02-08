@@ -46,25 +46,14 @@ namespace A0Utils.Wpf.ViewModels
         public bool IsBusy
         {
             get => _isBusy;
-            set
-            {
-                if (_isBusy != value)
-                {
-                    _isBusy = value;
-                    OnPropertyChanged(nameof(IsBusy));
-                }
-            }
+            set => SetProperty(ref _isBusy, value);
         }
 
         private int _downloadProgress;
         public int DownloadProgress
         {
             get => _downloadProgress;
-            set
-            {
-                _downloadProgress = value;
-                OnPropertyChanged(nameof(DownloadProgress));
-            }
+            set => SetProperty(ref _downloadProgress, value);
         }
 
         private Visibility _gridVisibility = Visibility.Collapsed;
@@ -85,11 +74,7 @@ namespace A0Utils.Wpf.ViewModels
         public ObservableCollection<string> Licenses
         {
             get => _licenses;
-            set
-            {
-                _licenses = value;
-                OnPropertyChanged(nameof(Licenses));
-            }
+            set => SetProperty(ref _licenses, value);
         }
 
         private void FindAllLicenses()
@@ -144,7 +129,7 @@ namespace A0Utils.Wpf.ViewModels
 
                 foreach (var license in Licenses)
                 {
-                    await DownloadAndCopyLicense(license).ConfigureAwait(false);
+                    await DownloadAndCopyLicense(license);
                 }
 
                 MessageDialogHelper.ShowInfo("Лицензии обновлены!");
@@ -200,7 +185,7 @@ namespace A0Utils.Wpf.ViewModels
                     LicenseName = LicenseName.PadLeft(8, '0');
                 }
 
-                var fileNameResult = await DownloadAndCopyLicense(LicenseName).ConfigureAwait(false);
+                var fileNameResult = await DownloadAndCopyLicense(LicenseName);
                 if (fileNameResult.IsFailure)
                 {
                     MessageDialogHelper.ShowError(fileNameResult.Error);
@@ -220,22 +205,26 @@ namespace A0Utils.Wpf.ViewModels
         private async Task<Result<string>> DownloadAndCopyLicense(string licenseName)
         {
             IsBusy = true;
-            var licenseResult = await _yandexService.DownloadLicense(licenseName).ConfigureAwait(false);
-            if (licenseResult.IsFailure)
+            try
             {
-                return Result.Failure<string>(licenseResult.Error);
-            }
+                var licenseResult = await _yandexService.DownloadLicense(licenseName);
+                if (licenseResult.IsFailure)
+                {
+                    return Result.Failure<string>(licenseResult.Error);
+                }
 
-            var copyResult = licenseResult.Value.CopyToAllFolders(_fileOperationsService, _a0InstallationPath);
-            if (copyResult.IsFailure)
+                var copyResult = licenseResult.Value.CopyToAllFolders(_fileOperationsService, _a0InstallationPath);
+                if (copyResult.IsFailure)
+                {
+                    return Result.Failure<string>(copyResult.Error);
+                }
+
+                return Path.GetFileName(licenseResult.Value.LicensePath);
+            }
+            finally
             {
                 IsBusy = false;
-                return Result.Failure<string>(copyResult.Error);
             }
-
-            IsBusy = false;
-
-            return Path.GetFileName(licenseResult.Value.LicensePath);
         }
     }
 }

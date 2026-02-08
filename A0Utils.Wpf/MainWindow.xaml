@@ -128,7 +128,7 @@
             </StatusBarItem>
             <Separator/>
             <StatusBarItem>
-                <Label Content="8(8142) 76-04-34 nik@rccs.sampo.ru" DockPanel.Dock="Top" />
+                <Label Content="8(8142) 76-04-34 | nik@rccs.sampo.ru" DockPanel.Dock="Top" />
             </StatusBarItem>
             <Separator/>
             <StatusBarItem>

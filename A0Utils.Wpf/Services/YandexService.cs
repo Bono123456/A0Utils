@@ -1,4 +1,4 @@
-using A0Utils.Wpf.Converters;
+﻿using A0Utils.Wpf.Converters;
 using A0Utils.Wpf.Helpers;
 using A0Utils.Wpf.Models;
 using CSharpFunctionalExtensions;
@@ -70,7 +70,14 @@ namespace A0Utils.Wpf.Services
         {
             try
             {
+                // Папку могли удалить после запуска программы — создаём заново
+                Directory.CreateDirectory(downloadPath);
+
                 var httpClient = _httpClientFactory.CreateClient("yandexClient");
+                var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+                // Сначала получаем сведения обо всех файлах, чтобы знать общий размер загрузки
+                var items = new List<YandexItem>();
                 foreach (var update in updates)
                 {
                     foreach (var url in update.Urls)
@@ -78,33 +85,54 @@ namespace A0Utils.Wpf.Services
                         var response = await httpClient.GetAsync($"{_settings.YandexUrl}{url}", HttpCompletionOption.ResponseHeadersRead);
                         using (var contentStream = await response.Content.ReadAsStreamAsync())
                         {
-                            var yandexItem = await JsonSerializer.DeserializeAsync<YandexItem>(contentStream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                            var path = Path.Combine(downloadPath, yandexItem.Name);
+                            items.Add(await JsonSerializer.DeserializeAsync<YandexItem>(contentStream, jsonOptions));
+                        }
+                    }
+                }
 
-                            using (var responseStream = await httpClient.GetStreamAsync(yandexItem.File))
+                long totalBytes = items.Sum(x => x.Size);
+                long totalRead = 0;
+                int lastProgress = 0;
+                DownloadUpdatesProgressChanged?.Invoke(this, 0);
+
+                for (int i = 0; i < items.Count; i++)
+                {
+                    var yandexItem = items[i];
+                    var path = Path.Combine(downloadPath, yandexItem.Name);
+
+                    using (var responseStream = await httpClient.GetStreamAsync(yandexItem.File))
+                    {
+                        using (var fileStream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, useAsync: false))
+                        {
+                            byte[] buffer = new byte[81920];
+                            int bytesRead;
+
+                            while ((bytesRead = await responseStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
                             {
-                                using (var fileStream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, useAsync: false))
+                                await fileStream.WriteAsync(buffer, 0, bytesRead);
+                                totalRead += bytesRead;
+
+                                if (totalBytes > 0)
                                 {
-                                    byte[] buffer = new byte[81920];
-                                    long totalBytes = yandexItem.Size;
-                                    long totalRead = 0;
-                                    int bytesRead;
-
-                                    while ((bytesRead = await responseStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                                    var progress = (int)Math.Min(100, totalRead * 100 / totalBytes);
+                                    if (progress != lastProgress)
                                     {
-                                        await fileStream.WriteAsync(buffer, 0, bytesRead);
-                                        totalRead += bytesRead;
-
-                                        if (totalBytes > 0)
-                                        {
-                                            DownloadUpdatesProgressChanged?.Invoke(this, (int)((totalRead * 100) / totalBytes));
-                                        }
+                                        lastProgress = progress;
+                                        DownloadUpdatesProgressChanged?.Invoke(this, progress);
                                     }
                                 }
                             }
                         }
                     }
+
+                    // Если размеры файлов неизвестны, считаем прогресс по количеству скачанных файлов
+                    if (totalBytes <= 0)
+                    {
+                        DownloadUpdatesProgressChanged?.Invoke(this, (i + 1) * 100 / items.Count);
+                    }
                 }
+
+                DownloadUpdatesProgressChanged?.Invoke(this, 100);
 
                 return Result.Success();
             }

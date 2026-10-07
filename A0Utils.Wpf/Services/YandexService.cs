@@ -1,4 +1,4 @@
-﻿using A0Utils.Wpf.Converters;
+using A0Utils.Wpf.Converters;
 using A0Utils.Wpf.Helpers;
 using A0Utils.Wpf.Models;
 using CSharpFunctionalExtensions;

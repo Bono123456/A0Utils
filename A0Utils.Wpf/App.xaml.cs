@@ -34,6 +34,14 @@ namespace A0Utils.Wpf
                 .WriteTo.File("a0utils.log", rollOnFileSizeLimit: true, fileSizeLimitBytes: 1024 * 1024)
                 .CreateLogger();
 
+            // Режим копирования лицензий с правами администратора (запускается из самой программы)
+            if (e.Args.Length == 3 && e.Args[0] == FileOperationsService.CopyLicensesArgument)
+            {
+                var fileOperationsService = _serviceProvider.GetService<FileOperationsService>();
+                Shutdown(fileOperationsService.RunElevatedCopyJob(e.Args[1], e.Args[2]));
+                return;
+            }
+
             var mainViewModel = _serviceProvider.GetService<MainViewModel>();
             var mainWindow = new MainWindow { DataContext = mainViewModel };
             mainWindow.Title = "Утилиты для А0";

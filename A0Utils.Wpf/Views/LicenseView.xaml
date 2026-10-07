@@ -3,7 +3,6 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:xctk="http://schemas.xceed.com/wpf/xaml/toolkit"
         xmlns:local="clr-namespace:A0Utils.Wpf.Views"
         mc:Ignorable="d"
         Title="LicenseView" Height="480" Width="540">
@@ -25,6 +24,28 @@
         <ProgressBar Grid.Row="3" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding DownloadProgress}" Height="25" Margin="5"/>
         <Button Grid.Row="4" Grid.ColumnSpan="2" Content="Обновить все" Command="{Binding UpdateLicensesCommand}" HorizontalAlignment="Left" Margin="5" Padding="5"/>
         <Button Grid.Row="4" Grid.ColumnSpan="2" Content="Закрыть" Command="{Binding CloseDialogCommand}" HorizontalAlignment="Right" Margin="5" Padding="5"/>
-        <xctk:BusyIndicator IsBusy="{Binding IsBusy}" BusyContent="Копирование лицензий..." HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
+        <!-- Индикатор "Копирование лицензий..." поверх окна, пока идёт работа (раньше был из библиотеки Extended WPF Toolkit) -->
+        <Grid Grid.RowSpan="5" Background="#99FFFFFF">
+            <Grid.Style>
+                <Style TargetType="{x:Type Grid}">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                            <Setter Property="Visibility" Value="Visible"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Grid.Style>
+            <Border Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4"
+                    Padding="20,14" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.25"/>
+                </Border.Effect>
+                <StackPanel MinWidth="200">
+                    <TextBlock Text="Копирование лицензий..." FontSize="13" Margin="0,0,0,10" HorizontalAlignment="Center"/>
+                    <ProgressBar IsIndeterminate="True" Height="6" Foreground="{StaticResource AccentBrush}" BorderThickness="0"/>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

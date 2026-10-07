@@ -2,19 +2,30 @@
 using CSharpFunctionalExtensions;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace A0Utils.Wpf.Helpers
 {
     public static class ParseHelpers
     {
+        // Даты в файлах лицензий (01.02.2026) и в списке обновлений (25-08-2026) всегда в формате
+        // "день, месяц, год". Читаем их строго по формату, чтобы результат не зависел
+        // от региональных настроек Windows у клиента.
+        private static readonly string[] DateFormats = { "dd.MM.yyyy", "dd-MM-yyyy", "d.M.yyyy", "d-M-yyyy" };
+
+        public static bool TryParseDate(string value, out DateTime result)
+        {
+            return DateTime.TryParseExact(value?.Trim(), DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out result);
+        }
+
         public static Result<DateTime> FindA0LicenseExp(string data)
         {
             Match match = Regex.Match(data, @"\[А0\]\s*Поддержка до:\s*(\d{2}\.\d{2}\.\d{4})");
 
             if (match.Success)
             {
-                if (DateTime.TryParse(match.Groups[1].Value, out DateTime result))
+                if (TryParseDate(match.Groups[1].Value, out DateTime result))
                 {
                     return result;
                 }
@@ -35,7 +46,7 @@ namespace A0Utils.Wpf.Helpers
 
             if (match.Success)
             {
-                if (DateTime.TryParse(match.Groups[1].Value, out DateTime result))
+                if (TryParseDate(match.Groups[1].Value, out DateTime result))
                 {
                     return result;
                 }
@@ -107,8 +118,8 @@ namespace A0Utils.Wpf.Helpers
 
                     foreach (Match dateMatch in dateRegex.Matches(entry.Groups[2].Value))
                     {
-                        if (DateTime.TryParse(dateMatch.Groups[1].Value, out DateTime start) &&
-                            DateTime.TryParse(dateMatch.Groups[2].Value, out DateTime end))
+                        if (TryParseDate(dateMatch.Groups[1].Value, out DateTime start) &&
+                            TryParseDate(dateMatch.Groups[2].Value, out DateTime end))
                         {
                             model.Dates.Add((start, end));
                         }

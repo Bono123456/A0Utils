@@ -25,7 +25,26 @@ namespace A0Utils.Wpf.Services
         private readonly IMemoryCache _memoryCache;
         private readonly SettingsService _settingsService;
 
-        private readonly string appPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+        // Скачанные лицензии сохраняются рядом с exe — это запасная копия, которую клиент
+        // может сам положить в папку А0. Если рядом с exe писать нельзя (например, Program Files),
+        // используется временная папка Windows.
+        private readonly string appPath = GetLicenseFolder();
+
+        private static string GetLicenseFolder()
+        {
+            var exeFolder = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            try
+            {
+                var probeFile = Path.Combine(exeFolder, Path.GetRandomFileName());
+                using (new FileStream(probeFile, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose)) { }
+                return exeFolder;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Нет прав на запись в папку программы {Folder}, лицензии будут сохранены во временную папку", exeFolder);
+                return Path.Combine(Path.GetTempPath(), "A0Utils");
+            }
+        }
 
         private readonly SettingsModel _settings;
 
@@ -150,7 +169,7 @@ namespace A0Utils.Wpf.Services
                 var httpClient = _httpClientFactory.CreateClient("yandexClient");
                 if (!_memoryCache.TryGetValue(LicenseKey, out YandexEmbedded yandexResource))
                 {
-                    var yandexResourceResult = await GetLicenseResource(httpClient, 1000);
+                    var yandexResourceResult = await GetLicenseResource(httpClient);
                     if (yandexResourceResult.IsFailure)
                     {
                         return Result.Failure<DownloadModel>(yandexResourceResult.Error);
@@ -173,7 +192,7 @@ namespace A0Utils.Wpf.Services
                 var descriptionPath = await DownloadLicenseDescriptionFile(licenseName, yandexResource, httpClient);
                 if(descriptionPath.IsFailure)
                 {
-                    Result.Failure<DownloadModel>(descriptionPath.Error);
+                    return Result.Failure<DownloadModel>(descriptionPath.Error);
                 }
 
                 return new DownloadModel { LicensePath = licensePath.Value, DescriptionPath = descriptionPath.Value };
@@ -191,7 +210,7 @@ namespace A0Utils.Wpf.Services
             try
             {
                 var httpClient = _httpClientFactory.CreateClient("yandexClient");
-                var yandexResourceResult = await GetLicenseResource(httpClient, 1000);
+                var yandexResourceResult = await GetLicenseResource(httpClient);
                 if (yandexResourceResult.IsFailure)
                 {
                     return Result.Failure<LicenseInfoModel>(yandexResourceResult.Error);
@@ -279,16 +298,34 @@ namespace A0Utils.Wpf.Services
             }
         }
 
-        private async Task<Result<YandexEmbedded>> GetLicenseResource(HttpClient httpClient, int limit)
+        // Яндекс отдаёт список файлов папки порциями. Запрашиваем по 1000 штук, пока не получим
+        // все: в каждом ответе Яндекс сообщает общее число файлов (Total).
+        private async Task<Result<YandexEmbedded>> GetLicenseResource(HttpClient httpClient)
         {
+            const int pageSize = 1000;
             try
             {
-                var response = await httpClient.GetAsync($"{_settings.YandexUrl}{_settings.LicenseUrl}&limit={limit}", HttpCompletionOption.ResponseHeadersRead);
-                using (var contentStream = await response.Content.ReadAsStreamAsync())
+                var items = new List<YandexItem>();
+                int total;
+                do
                 {
-                    var yandexResource = await JsonSerializer.DeserializeAsync<YandexResource>(contentStream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                    return yandexResource._Embedded;
+                    var response = await httpClient.GetAsync($"{_settings.YandexUrl}{_settings.LicenseUrl}&limit={pageSize}&offset={items.Count}", HttpCompletionOption.ResponseHeadersRead);
+                    using (var contentStream = await response.Content.ReadAsStreamAsync())
+                    {
+                        var yandexResource = await JsonSerializer.DeserializeAsync<YandexResource>(contentStream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        var page = yandexResource._Embedded;
+                        total = page.Total;
+                        if (page.Items == null || page.Items.Length == 0)
+                        {
+                            break;
+                        }
+
+                        items.AddRange(page.Items);
+                    }
                 }
+                while (items.Count < total);
+
+                return new YandexEmbedded { Items = items.ToArray(), Limit = items.Count, Offset = 0, Total = total };
             }
             catch (System.Exception ex)
             {
@@ -318,6 +355,7 @@ namespace A0Utils.Wpf.Services
                     return Result.Failure<string>($"Лицензия {licenseName} не найдена");
                 }
 
+                Directory.CreateDirectory(appPath);
                 var path = Path.Combine(appPath, license.Name);
 
                 using (var responseStream = await httpClient.GetStreamAsync(license.File))
@@ -377,6 +415,7 @@ namespace A0Utils.Wpf.Services
                     return Result.Failure<string>($"Фаил с описанием лицензий {licenseName} не найден");
                 }
 
+                Directory.CreateDirectory(appPath);
                 var path = Path.Combine(appPath, description.Name);
 
                 using (var responseStream = await httpClient.GetStreamAsync(description.File))

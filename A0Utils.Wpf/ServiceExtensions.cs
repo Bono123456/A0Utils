@@ -2,7 +2,6 @@
 using A0Utils.Wpf.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using System;
-using System.Net.Http.Handlers;
 
 namespace A0Utils.Wpf
 {
@@ -12,11 +11,7 @@ namespace A0Utils.Wpf
         {
             var services = new ServiceCollection();
 
-            services.AddTransient<ProgressMessageHandler>();
-
-            services
-                .AddHttpClient("yandexClient")
-                .AddHttpMessageHandler<ProgressMessageHandler>();
+            services.AddHttpClient("yandexClient");
 
             services.AddMemoryCache();
 

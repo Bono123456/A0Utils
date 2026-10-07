@@ -29,6 +29,7 @@ namespace A0Utils.Wpf.Services
             var client = _httpClientFactory.CreateClient();
             using HttpResponseMessage response = await client.GetAsync(fileUrl);
             response.EnsureSuccessStatusCode();
+            Directory.CreateDirectory(downloadPath);
             var destinationPath = Path.Combine(downloadPath, fileName);
 
             using Stream contentStream = await response.Content.ReadAsStreamAsync(),

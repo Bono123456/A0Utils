@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace A0Utils.Wpf.Models
 {
@@ -15,6 +16,41 @@ namespace A0Utils.Wpf.Models
         public IEnumerable<string> Urls { get; set; }
         public string Index { get; set; } = string.Empty;
         public string Date { get; set; } = string.Empty;
+        public string Region { get; set; } = string.Empty;
+        public string Tag { get; set; } = string.Empty;
+
+        // Подгруппа внутри категории: "2026 Карелия" для справочников цен,
+        // тег (например "ФСНБ-2022") для баз. Пустая строка — без подгруппы.
+        public string SubGroup
+        {
+            get
+            {
+                if (!string.IsNullOrWhiteSpace(Tag))
+                {
+                    return Tag;
+                }
+
+                if (Category == "Справочники цен")
+                {
+                    var year = FindYear(Date) ?? FindYear(Name);
+                    var group = string.Join(" ", new[] { year, Region }.Where(x => !string.IsNullOrWhiteSpace(x)));
+                    return group;
+                }
+
+                return string.Empty;
+            }
+        }
+
+        private static string FindYear(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return null;
+            }
+
+            var match = Regex.Match(text, @"(?<!\d)(20\d{2})(?!\d)");
+            return match.Success ? match.Groups[1].Value : null;
+        }
 
         private bool _isSelected;
         public bool IsSelected
@@ -46,9 +82,13 @@ namespace A0Utils.Wpf.Models
         public IEnumerable<string> Urls { get; private set; }
         public string Index { get; private set; }
         public string Date { get; private set; }
+        public string Region { get; private set; }
+        public string Tag { get; private set; }
 
-        public YandexUpdateModel(string name, string key_type, string category, IEnumerable<string> urls, string index, string date)
+        public YandexUpdateModel(string name, string key_type, string category, IEnumerable<string> urls, string index, string date, string region, string tag)
         {
+            Region = region;
+            Tag = tag;
             Name = name;
             Key_type = key_type;
             Category = category;
@@ -69,7 +109,9 @@ namespace A0Utils.Wpf.Models
                 Category = y.Category,
                 Urls = y.Urls,
                 Index = y.Index,
-                Date = y.Date
+                Date = y.Date,
+                Region = y.Region,
+                Tag = y.Tag
             });
         }
 

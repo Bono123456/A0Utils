@@ -1,0 +1,51 @@
+﻿<Window x:Class="A0Utils.Wpf.Views.LicenseView"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:A0Utils.Wpf.Views"
+        mc:Ignorable="d"
+        Title="LicenseView" Height="480" Width="540">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" HorizontalAlignment="Center" Text="Управление лицензиями" FontSize="16"/>
+        <StackPanel Visibility="{Binding GridVisibility}" Orientation="Vertical" Grid.Row="1" Margin="5">
+            <Label Content="Добавить новую лицензию" />
+            <TextBox Text="{Binding LicenseName, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Stretch" FontSize="16" Margin="3" />
+            <Button Content="Добавить" Command="{Binding AddLicenseCommand}" HorizontalAlignment="Right" Margin="5" Padding="5"/>
+        </StackPanel>
+        <ListBox Grid.Row="2" ItemsSource="{Binding Licenses}" Height="200" ScrollViewer.VerticalScrollBarVisibility="Visible" Margin="10" />
+        <ProgressBar Grid.Row="3" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding DownloadProgress}" Height="25" Margin="5"/>
+        <Button Grid.Row="4" Grid.ColumnSpan="2" Content="Обновить все" Command="{Binding UpdateLicensesCommand}" HorizontalAlignment="Left" Margin="5" Padding="5"/>
+        <Button Grid.Row="4" Grid.ColumnSpan="2" Content="Закрыть" Command="{Binding CloseDialogCommand}" HorizontalAlignment="Right" Margin="5" Padding="5"/>
+        <!-- Индикатор "Копирование лицензий..." поверх окна, пока идёт работа (раньше был из библиотеки Extended WPF Toolkit) -->
+        <Grid Grid.RowSpan="5" Background="#99FFFFFF">
+            <Grid.Style>
+                <Style TargetType="{x:Type Grid}">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                            <Setter Property="Visibility" Value="Visible"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Grid.Style>
+            <Border Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4"
+                    Padding="20,14" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="12" ShadowDepth="2" Opacity="0.25"/>
+                </Border.Effect>
+                <StackPanel MinWidth="200">
+                    <TextBlock Text="Копирование лицензий..." FontSize="13" Margin="0,0,0,10" HorizontalAlignment="Center"/>
+                    <ProgressBar IsIndeterminate="True" Height="6" Foreground="{StaticResource AccentBrush}" BorderThickness="0"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

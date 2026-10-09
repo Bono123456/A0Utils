@@ -475,7 +475,7 @@
             </DataGrid.Columns>
         </DataGrid>
         <DockPanel Grid.Row="1" Margin="0,8,0,0" LastChildFill="True">
-            <Button Content="Запросить счёт" Command="{Binding RequestInvoiceCommand}" Style="{StaticResource PrimaryButton}"
+            <Button Content="Запросить счёт" Command="{Binding OpenRequestInvoiceCommand}" Style="{StaticResource PrimaryButton}"
                     DockPanel.Dock="Right" MinWidth="120" ToolTip="Запросить счёт на выбранные ресурсы или продление лицензии"/>
             <TextBlock Text="Отметьте дополнительные ресурсы. Продление можно выбрать в окне запроса счёта." Foreground="{StaticResource MutedTextBrush}"
                        VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,8,0"/>

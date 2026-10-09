@@ -342,7 +342,7 @@ namespace A0Utils.Wpf.ViewModels
                 UpdateModelsWithoutLicense = extraResources;
                 _loadedLicense = licenseName;
                 _loadedLicenseInfo = licenseResult.Value;
-                _requestInvoiceCommand?.NotifyCanExecuteChanged();
+                _openRequestInvoiceCommand?.NotifyCanExecuteChanged();
 
                 MessageDialogHelper.ShowInfo("Информация о лицензии получена!");
             }
@@ -358,7 +358,7 @@ namespace A0Utils.Wpf.ViewModels
         {
             _loadedLicense = null;
             _loadedLicenseInfo = null;
-            _requestInvoiceCommand?.NotifyCanExecuteChanged();
+            _openRequestInvoiceCommand?.NotifyCanExecuteChanged();
             UpdateModels = new ObservableCollection<UpdateModel>();
             UpdateModelsWithoutLicense = new ObservableCollection<UpdateModel>();
             A0LicenseExp = null;
@@ -433,12 +433,12 @@ namespace A0Utils.Wpf.ViewModels
             MessageDialogHelper.ShowInfo("Путь сохранения обновлений изменен!");
         }
 
-        private RelayCommand _requestInvoiceCommand;
-        public ICommand RequestInvoiceCommand
+        private RelayCommand _openRequestInvoiceCommand;
+        public ICommand OpenRequestInvoiceCommand
         {
             get
             {
-                return _requestInvoiceCommand ??= new RelayCommand(RequestInvoice, CanRequestInvoice);
+                return _openRequestInvoiceCommand ??= new RelayCommand(RequestInvoice, CanRequestInvoice);
             }
         }
 

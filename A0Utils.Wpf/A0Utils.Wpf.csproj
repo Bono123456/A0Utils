@@ -100,6 +100,8 @@
       <SubType>Designer</SubType>
     </ApplicationDefinition>
     <Compile Include="Converters\JsonDateTimeConverter.cs" />
+    <Compile Include="Converters\UpdateGroupDescription.cs" />
+    <Compile Include="Converters\GroupExpandConverter.cs" />
     <Compile Include="Helpers\AssemblyHelpers.cs" />
     <Compile Include="Helpers\ParseHelpers.cs" />
     <Compile Include="Helpers\PathHelpers.cs" />
@@ -107,6 +109,7 @@
     <Compile Include="Models\DownloadModel.cs" />
     <Compile Include="Models\LicenseModel.cs" />
     <Compile Include="Models\LicenseInfoModel.cs" />
+    <Compile Include="Models\InvoiceRenewalOption.cs" />
     <Compile Include="Models\PriceModel.cs" />
     <Compile Include="Models\SettingsModel.cs" />
     <Compile Include="Models\SubscriptionModel.cs" />
@@ -119,6 +122,14 @@
     <Compile Include="Services\YandexService.cs" />
     <Compile Include="ViewModels\LicenseViewModel.cs" />
     <Compile Include="ViewModels\MainViewModel.cs" />
+    <Compile Include="ViewModels\InvoiceRequestViewModel.cs" />
+    <Compile Include="Views\InvoiceRequestView.xaml.cs">
+      <DependentUpon>InvoiceRequestView.xaml</DependentUpon>
+    </Compile>
+    <Page Include="Views\InvoiceRequestView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
     <Compile Include="ViewModels\SettingsViewModel.cs" />
     <Compile Include="Views\LicenseView.xaml.cs">
       <DependentUpon>LicenseView.xaml</DependentUpon>

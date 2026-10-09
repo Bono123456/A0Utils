@@ -27,8 +27,12 @@ namespace A0Utils.Wpf.Models
         // среди всех индексов для индексов). Такая группа года показывается раскрытой.
         public bool IsNewestYear { get; set; }
 
-        // Год, по которому группируется элемент (null — не группируется по году)
-        public int? GroupYear
+        // Справочник цен из единственного региона в списке: такой регион показывается раскрытым,
+        // чтобы его не пропустили
+        public bool IsOnlyRegion { get; set; }
+
+        // Год справочника или индексов; у остальных ресурсов группировки по году нет.
+        public int? Year
         {
             get
             {
@@ -37,53 +41,11 @@ namespace A0Utils.Wpf.Models
                     return null;
                 }
 
-                string year = Category == "Справочники цен" ? Group2
-                    : Category == "Индексы к ФЕР/ТЕР" ? Group1
+                var year = Category == "Справочники цен" ? FindYear(Date) ?? FindYear(Name)
+                    : Category == "Индексы к ФЕР/ТЕР" ? FindYear(Name)
                     : null;
 
                 return int.TryParse(year, out var value) ? value : (int?)null;
-            }
-        }
-
-        // Группировка внутри категории (два уровня):
-        //   справочники цен — регион, внутри годы;
-        //   индексы к ФЕР/ТЕР — год;
-        //   базы с тегом — последняя версия без группы, предыдущие в группе.
-        // Пустая строка или пробел — без заголовка группы. Разные значения нужны,
-        // чтобы последняя ФСНБ и прочие базы не попали в одну группу.
-        public string Group1
-        {
-            get
-            {
-                if (!string.IsNullOrWhiteSpace(Tag))
-                {
-                    return IsLatestInTag ? string.Empty : $"{Tag}: предыдущие изменения";
-                }
-
-                if (Category == "Справочники цен")
-                {
-                    return string.IsNullOrWhiteSpace(Region) ? "Прочие" : Region;
-                }
-
-                if (Category == "Индексы к ФЕР/ТЕР")
-                {
-                    return FindYear(Name) ?? " ";
-                }
-
-                return " ";
-            }
-        }
-
-        public string Group2
-        {
-            get
-            {
-                if (Category == "Справочники цен" && string.IsNullOrWhiteSpace(Tag))
-                {
-                    return FindYear(Date) ?? FindYear(Name) ?? string.Empty;
-                }
-
-                return string.Empty;
             }
         }
 
@@ -228,16 +190,29 @@ namespace A0Utils.Wpf.Models
         private static void MarkNewestYear(IEnumerable<UpdateModel> updates)
         {
             var groups = updates
-                .Where(x => x.GroupYear.HasValue)
-                .GroupBy(x => x.Category == "Справочники цен" ? x.Category + "|" + x.Group1 : x.Category);
+                .Where(x => x.Year.HasValue)
+                .GroupBy(x => new
+                {
+                    x.Category,
+                    Region = x.Category == "Справочники цен"
+                        ? (string.IsNullOrWhiteSpace(x.Region) ? "Прочие" : x.Region)
+                        : string.Empty
+                });
 
             foreach (var group in groups)
             {
-                var newestYear = group.Max(x => x.GroupYear.Value);
+                var newestYear = group.Max(x => x.Year.Value);
                 foreach (var update in group)
                 {
-                    update.IsNewestYear = update.GroupYear == newestYear;
+                    update.IsNewestYear = update.Year == newestYear;
                 }
+            }
+
+            var prices = updates.Where(x => x.Category == "Справочники цен" && string.IsNullOrWhiteSpace(x.Tag)).ToList();
+            var isOnlyRegion = prices.Select(x => string.IsNullOrWhiteSpace(x.Region) ? "Прочие" : x.Region).Distinct().Count() == 1;
+            foreach (var price in prices)
+            {
+                price.IsOnlyRegion = isOnlyRegion;
             }
         }
 

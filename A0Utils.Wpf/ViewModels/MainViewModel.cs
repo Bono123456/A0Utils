@@ -51,10 +51,22 @@ namespace A0Utils.Wpf.ViewModels
         public static string AssemblyCopyright { get { return _assemblyInfo[1]; } }
         public static string AssemblyCompany { get { return _assemblyInfo[2]; } }
 
-        public string SelectedLicense { get; set; }
+        private string _selectedLicense;
+        public string SelectedLicense
+        {
+            get => _selectedLicense;
+            set
+            {
+                if (SetProperty(ref _selectedLicense, value))
+                {
+                    ClearLoadedLicense();
+                }
+            }
+        }
 
         // Лицензия, для которой сейчас показаны списки обновлений и ресурсов
         private string _loadedLicense;
+        private LicenseInfoModel _loadedLicenseInfo;
 
         private string _downloadPath;
         public string DownloadPath
@@ -246,31 +258,63 @@ namespace A0Utils.Wpf.ViewModels
 
         private async Task GetLicenseInfo()
         {
+            var licenseName = SelectedLicense;
+            ClearLoadedLicense();
+
             try
             {
-                UpdateModels?.Clear();
-                UpdateModelsWithoutLicense?.Clear();
-
-                if (string.IsNullOrEmpty(SelectedLicense))
+                if (string.IsNullOrEmpty(licenseName))
                 {
                     MessageDialogHelper.ShowError("Выберите лицензию из списка");
                     return;
                 }
 
-                var downloadLicenseResult = await DownloadAndCopyLicense(SelectedLicense);
+                var downloadLicenseResult = await DownloadAndCopyLicense(licenseName);
+                if (SelectedLicense != licenseName)
+                {
+                    return;
+                }
+
                 if (downloadLicenseResult.IsFailure)
                 {
                     MessageDialogHelper.ShowError(downloadLicenseResult.Error);
                     return;
                 }
 
-                var licenseResult = await _yandexService.GetLicensesInfo(SelectedLicense);
+                var licenseResult = await _yandexService.GetLicensesInfo(licenseName);
+                if (SelectedLicense != licenseName)
+                {
+                    return;
+                }
+
                 if (licenseResult.IsFailure)
                 {
                     MessageDialogHelper.ShowError(licenseResult.Error);
                     return;
                 }
 
+                var updatesResult = await _yandexService.GetUpdates();
+                if (SelectedLicense != licenseName)
+                {
+                    return;
+                }
+
+                if (updatesResult.IsFailure)
+                {
+                    MessageDialogHelper.ShowError(updatesResult.Error);
+                    return;
+                }
+
+                var updateCollectionResult = UpdateModelExtensions.ApplyFilter(updatesResult.Value, licenseResult.Value);
+                if (updateCollectionResult.IsFailure)
+                {
+                    MessageDialogHelper.ShowError(updateCollectionResult.Error);
+                    return;
+                }
+
+                // Prepare both lists before publishing the successfully loaded license.
+                var updates = new ObservableCollection<UpdateModel>(updateCollectionResult.Value.FilteredLicenses);
+                var extraResources = new ObservableCollection<UpdateModel>(updateCollectionResult.Value.AllLicenses);
                 var today = DateTime.Today;
                 IsA0Expired = licenseResult.Value.A0LicenseExpAt != default && licenseResult.Value.A0LicenseExpAt < today;
                 IsPIRExpired = licenseResult.Value.PIRLicenseExpAt != default && licenseResult.Value.PIRLicenseExpAt < today;
@@ -294,31 +338,35 @@ namespace A0Utils.Wpf.ViewModels
                         ? $"Подписка на базы до: {licenseResult.Value.SubscriptionLicenseExpAt:dd.MM.yyyy}"
                         : $"Подписка на базы закончилась {licenseResult.Value.SubscriptionLicenseExpAt:dd.MM.yyyy}";
 
-                var updatesResult = await _yandexService.GetUpdates();
-                if (updatesResult.IsFailure)
-                {
-                    MessageDialogHelper.ShowError(updatesResult.Error);
-                    return;
-                }
-
-                var updateCollectionResult = UpdateModelExtensions.ApplyFilter(updatesResult.Value, licenseResult.Value);
-                if (updateCollectionResult.IsFailure)
-                {
-                    MessageDialogHelper.ShowError(updateCollectionResult.Error);
-                    return;
-                }
-
-                UpdateModels = new ObservableCollection<UpdateModel>(updateCollectionResult.Value.FilteredLicenses);
-                UpdateModelsWithoutLicense = new ObservableCollection<UpdateModel>(updateCollectionResult.Value.AllLicenses);
-                _loadedLicense = SelectedLicense;
+                UpdateModels = updates;
+                UpdateModelsWithoutLicense = extraResources;
+                _loadedLicense = licenseName;
+                _loadedLicenseInfo = licenseResult.Value;
+                _requestInvoiceCommand?.NotifyCanExecuteChanged();
 
                 MessageDialogHelper.ShowInfo("Информация о лицензии получена!");
             }
             catch (Exception ex)
             {
+                ClearLoadedLicense();
                 Log.Error(ex, "Ошибка");
                 MessageDialogHelper.ShowError($"Ошибка: {ex.Message}");
             }
+        }
+
+        private void ClearLoadedLicense()
+        {
+            _loadedLicense = null;
+            _loadedLicenseInfo = null;
+            _requestInvoiceCommand?.NotifyCanExecuteChanged();
+            UpdateModels = new ObservableCollection<UpdateModel>();
+            UpdateModelsWithoutLicense = new ObservableCollection<UpdateModel>();
+            A0LicenseExp = null;
+            PIRLicenseExp = null;
+            SubscriptionLicenseExp = null;
+            IsA0Expired = false;
+            IsPIRExpired = false;
+            IsSubscriptionExpired = false;
         }
 
         private ICommand _downloadSelectedCommand;
@@ -385,52 +433,38 @@ namespace A0Utils.Wpf.ViewModels
             MessageDialogHelper.ShowInfo("Путь сохранения обновлений изменен!");
         }
 
-        private ICommand _requestInvoiceCommand;
+        private RelayCommand _requestInvoiceCommand;
         public ICommand RequestInvoiceCommand
         {
             get
             {
-                return _requestInvoiceCommand ??= new RelayCommand(RequestInvoice);
+                return _requestInvoiceCommand ??= new RelayCommand(RequestInvoice, CanRequestInvoice);
             }
         }
 
-        // Формирует письмо с просьбой выставить счёт на отмеченные дополнительные ресурсы
+        private bool CanRequestInvoice() =>
+            !string.IsNullOrEmpty(_loadedLicense) && _loadedLicense == SelectedLicense
+            && _loadedLicenseInfo != null && UpdateModelsWithoutLicense != null;
+
+        // Передаёт в диалог снимок выбранных ресурсов и успешно загруженной лицензии.
         private void RequestInvoice()
         {
-            if (UpdateModelsWithoutLicense is null || string.IsNullOrEmpty(_loadedLicense))
+            if (!CanRequestInvoice())
             {
                 MessageDialogHelper.ShowError("Сначала выберите лицензию и нажмите «Получить обновления»");
                 return;
             }
 
-            var selected = UpdateModelsWithoutLicense.Where(x => x.IsSelected).ToList();
-            if (selected.Count == 0)
+            var resources = UpdateModelsWithoutLicense.Where(x => x.IsSelected).Select(DescribeResource).ToList();
+            var request = new InvoiceRequestViewModel(_loadedLicense, _loadedLicenseInfo,
+                resources, SupportEmail, AssemblyVersion, DateTime.Today);
+            if (resources.Count == 0 && !request.HasRenewals)
             {
                 MessageDialogHelper.ShowError("Отметьте ресурсы, на которые нужно выставить счёт");
                 return;
             }
 
-            var licenseNumber = Path.GetFileNameWithoutExtension(_loadedLicense);
-            var subject = $"Запрос счёта на дополнительные ресурсы, лицензия {licenseNumber}";
-
-            var body = new System.Text.StringBuilder();
-            body.AppendLine("Здравствуйте!");
-            body.AppendLine();
-            body.AppendLine($"Просим выставить платёжные документы на дополнительные ресурсы для лицензии № {licenseNumber}:");
-            body.AppendLine();
-            for (int i = 0; i < selected.Count; i++)
-            {
-                body.AppendLine($"{i + 1}. {DescribeResource(selected[i])}");
-            }
-            body.AppendLine();
-            body.AppendLine("Организация: ");
-            body.AppendLine("ИНН: ");
-            body.AppendLine("Контактное лицо: ");
-            body.AppendLine("Телефон: ");
-            body.AppendLine();
-            body.AppendLine($"Сформировано в программе «Утилиты для А0» {AssemblyVersion}");
-
-            RequestDialogHelper.Show(subject, body.ToString(), SupportEmail);
+            _dialogService.ShowInvoiceRequestDialog(request);
         }
 
         private const string SupportEmail = "nik@rccs.sampo.ru";

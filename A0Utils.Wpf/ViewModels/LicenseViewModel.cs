@@ -129,7 +129,12 @@ namespace A0Utils.Wpf.ViewModels
 
                 foreach (var license in Licenses)
                 {
-                    await DownloadAndCopyLicense(license);
+                    var result = await DownloadAndCopyLicense(license);
+                    if (result.IsFailure)
+                    {
+                        MessageDialogHelper.ShowError(result.Error);
+                        return;
+                    }
                 }
 
                 MessageDialogHelper.ShowInfo("Лицензии обновлены!");

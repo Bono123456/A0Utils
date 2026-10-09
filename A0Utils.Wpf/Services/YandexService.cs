@@ -12,7 +12,9 @@ using System.Net.Http;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
+using System.Text.Json.Serialization;
 
 namespace A0Utils.Wpf.Services
 {
@@ -63,12 +65,12 @@ namespace A0Utils.Wpf.Services
             _settings = _settingsService.GetSettings();
         }
 
-        public async Task<Result<IEnumerable<UpdateModel>>> GetUpdates()
+        public async Task<Result<IEnumerable<UpdateModel>>> GetUpdates(CancellationToken cancellationToken = default)
         {
-            var updateModels = new List<UpdateModel>();
+            cancellationToken.ThrowIfCancellationRequested();
             if (!_memoryCache.TryGetValue(UpdatesKey, out IEnumerable<YandexUpdateModel> yandexUpdateModels))
             {
-                var result = await GetUpdatesByHttp();
+                var result = await GetUpdatesByHttp(cancellationToken);
                 if (result.IsFailure)
                 {
                     return Result.Failure<IEnumerable<UpdateModel>>(result.Error);
@@ -85,91 +87,75 @@ namespace A0Utils.Wpf.Services
             return Result.Success(yandexUpdateModels.MapToUpdateModels());
         }
 
-        public async Task<Result> DownloadUpdates(IEnumerable<UpdateModel> updates, string downloadPath)
+        public async Task<Result> DownloadUpdates(IEnumerable<UpdateModel> updates, string downloadPath, CancellationToken cancellationToken = default)
         {
             try
             {
-                // Папку могли удалить после запуска программы — создаём заново
-                Directory.CreateDirectory(downloadPath);
-
-                var httpClient = _httpClientFactory.CreateClient("yandexClient");
-                var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-
-                // Сначала получаем сведения обо всех файлах, чтобы знать общий размер загрузки
-                var items = new List<YandexItem>();
-                foreach (var update in updates)
+                cancellationToken.ThrowIfCancellationRequested();
+                using var httpClient = _httpClientFactory.CreateClient("yandexClient");
+                var urls = updates.SelectMany(x => x.Urls).Distinct(StringComparer.Ordinal).ToList();
+                var items = new Dictionary<string, YandexItem>(StringComparer.OrdinalIgnoreCase);
+                foreach (var url in urls)
                 {
-                    foreach (var url in update.Urls)
+                    var item = await ReadJsonAsync<YandexItem>(httpClient, $"{_settings.YandexUrl}{url}", cancellationToken);
+                    ValidateDownloadItem(item);
+                    if (items.TryGetValue(item.Name, out var existing))
                     {
-                        var response = await httpClient.GetAsync($"{_settings.YandexUrl}{url}", HttpCompletionOption.ResponseHeadersRead);
-                        using (var contentStream = await response.Content.ReadAsStreamAsync())
-                        {
-                            items.Add(await JsonSerializer.DeserializeAsync<YandexItem>(contentStream, jsonOptions));
-                        }
+                        if (!string.Equals(existing.File, item.File, StringComparison.Ordinal) || existing.Size != item.Size)
+                            throw new InvalidDataException($"Разные загрузки используют одно имя: {item.Name}");
+                    }
+                    else
+                    {
+                        items.Add(item.Name, item);
                     }
                 }
 
-                long totalBytes = items.Sum(x => x.Size);
+                var totalBytes = items.Values.All(x => x.Size.HasValue) ? items.Values.Sum(x => x.Size.Value) : 0;
                 long totalRead = 0;
                 int lastProgress = 0;
+                int completed = 0;
                 DownloadUpdatesProgressChanged?.Invoke(this, 0);
-
-                for (int i = 0; i < items.Count; i++)
+                foreach (var item in items.Values)
                 {
-                    var yandexItem = items[i];
-                    var path = Path.Combine(downloadPath, yandexItem.Name);
-
-                    using (var responseStream = await httpClient.GetStreamAsync(yandexItem.File))
+                    await DownloadFileAsync(httpClient, item, downloadPath, bytesRead =>
                     {
-                        using (var fileStream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 81920, useAsync: false))
+                        totalRead += bytesRead;
+                        if (totalBytes > 0)
                         {
-                            byte[] buffer = new byte[81920];
-                            int bytesRead;
-
-                            while ((bytesRead = await responseStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                            // 100 means the last file has been validated and committed.
+                            var progress = (int)Math.Min(99, (double)totalRead * 100 / totalBytes);
+                            if (progress != lastProgress)
                             {
-                                await fileStream.WriteAsync(buffer, 0, bytesRead);
-                                totalRead += bytesRead;
-
-                                if (totalBytes > 0)
-                                {
-                                    var progress = (int)Math.Min(100, totalRead * 100 / totalBytes);
-                                    if (progress != lastProgress)
-                                    {
-                                        lastProgress = progress;
-                                        DownloadUpdatesProgressChanged?.Invoke(this, progress);
-                                    }
-                                }
+                                lastProgress = progress;
+                                DownloadUpdatesProgressChanged?.Invoke(this, progress);
                             }
                         }
-                    }
-
-                    // Если размеры файлов неизвестны, считаем прогресс по количеству скачанных файлов
+                    }, cancellationToken);
+                    completed++;
                     if (totalBytes <= 0)
-                    {
-                        DownloadUpdatesProgressChanged?.Invoke(this, (i + 1) * 100 / items.Count);
-                    }
+                        DownloadUpdatesProgressChanged?.Invoke(this, Math.Min(99, completed * 100 / items.Count));
                 }
-
+                cancellationToken.ThrowIfCancellationRequested();
                 DownloadUpdatesProgressChanged?.Invoke(this, 100);
-
                 return Result.Success();
             }
-            catch (System.Exception ex)
+            catch (Exception) when (cancellationToken.IsCancellationRequested) { throw new OperationCanceledException(cancellationToken); }
+            catch (Exception ex)
             {
-                Log.Error("Ошибка при скачивании обновлений: {Error}", ex.Message);
+                Log.Error(ex, "Ошибка при скачивании обновлений");
                 return Result.Failure("Ошибка при скачивании обновлений");
             }
         }
 
-        public async Task<Result<DownloadModel>> DownloadLicense(string licenseName)
+        public async Task<Result<DownloadModel>> DownloadLicense(string licenseName, CancellationToken cancellationToken = default)
         {
             try
             {
-                var httpClient = _httpClientFactory.CreateClient("yandexClient");
+                cancellationToken.ThrowIfCancellationRequested();
+                using var httpClient = _httpClientFactory.CreateClient("yandexClient");
                 if (!_memoryCache.TryGetValue(LicenseKey, out YandexEmbedded yandexResource))
                 {
-                    var yandexResourceResult = await GetLicenseResource(httpClient);
+                    var yandexResourceResult = await GetLicenseResource(httpClient, cancellationToken);
                     if (yandexResourceResult.IsFailure)
                     {
                         return Result.Failure<DownloadModel>(yandexResourceResult.Error);
@@ -183,13 +169,13 @@ namespace A0Utils.Wpf.Services
                     yandexResource = yandexResourceResult.Value;
                 }
 
-                var licensePath = await DownloadLicenseFile(licenseName, yandexResource, httpClient);
+                var licensePath = await DownloadLicenseFile(licenseName, yandexResource, httpClient, cancellationToken);
                 if(licensePath.IsFailure)
                 {
                     return Result.Failure<DownloadModel>(licensePath.Error);
                 }
 
-                var descriptionPath = await DownloadLicenseDescriptionFile(licenseName, yandexResource, httpClient);
+                var descriptionPath = await DownloadLicenseDescriptionFile(licenseName, yandexResource, httpClient, cancellationToken);
                 if(descriptionPath.IsFailure)
                 {
                     return Result.Failure<DownloadModel>(descriptionPath.Error);
@@ -198,31 +184,33 @@ namespace A0Utils.Wpf.Services
                 return new DownloadModel { LicensePath = licensePath.Value, DescriptionPath = descriptionPath.Value };
 
             }
-            catch (System.Exception ex)
+            catch (Exception) when (cancellationToken.IsCancellationRequested) { throw new OperationCanceledException(cancellationToken); }
+            catch (Exception ex)
             {
                 Log.Error("Ошибка при получении лицензии: {Error}", ex);
                 return Result.Failure<DownloadModel>("Ошибка при получении лицензии");
             }
         }
 
-        public async Task<Result<LicenseInfoModel>> GetLicensesInfo(string licenseName)
+        public async Task<Result<LicenseInfoModel>> GetLicensesInfo(string licenseName, CancellationToken cancellationToken = default)
         {
             try
             {
-                var httpClient = _httpClientFactory.CreateClient("yandexClient");
-                var yandexResourceResult = await GetLicenseResource(httpClient);
+                cancellationToken.ThrowIfCancellationRequested();
+                using var httpClient = _httpClientFactory.CreateClient("yandexClient");
+                var yandexResourceResult = await GetLicenseResource(httpClient, cancellationToken);
                 if (yandexResourceResult.IsFailure)
                 {
                     return Result.Failure<LicenseInfoModel>(yandexResourceResult.Error);
                 }
 
-                var licenseResult = await ParseLicenseDescriptionFile(licenseName, yandexResourceResult.Value, httpClient);
+                var licenseResult = await ParseLicenseDescriptionFile(licenseName, yandexResourceResult.Value, httpClient, cancellationToken);
                 if (licenseResult.IsFailure)
                 {
                     return Result.Failure<LicenseInfoModel>(licenseResult.Error);
                 }
 
-                var subscriptionResult = await GetSubscription(licenseName, httpClient);
+                var subscriptionResult = await GetSubscription(licenseName, httpClient, cancellationToken);
                 if (subscriptionResult.IsFailure)
                 {
                     return Result.Failure<LicenseInfoModel>(subscriptionResult.Error);
@@ -232,109 +220,99 @@ namespace A0Utils.Wpf.Services
                 return licenseResult;
 
             }
-            catch (System.Exception ex)
+            catch (Exception) when (cancellationToken.IsCancellationRequested) { throw new OperationCanceledException(cancellationToken); }
+            catch (Exception ex)
             {
                 Log.Error("Ошибка при получении лицензии: {Error}", ex);
                 return Result.Failure<LicenseInfoModel>("Ошибка при получении лицензии");
             }
         }
 
-        private async Task<Result<IEnumerable<YandexUpdateModel>>> GetUpdatesByHttp()
+        private async Task<Result<IEnumerable<YandexUpdateModel>>> GetUpdatesByHttp(CancellationToken cancellationToken)
         {
             try
             {
-                var httpClient = _httpClientFactory.CreateClient("yandexClient");
-                var response = await httpClient.GetAsync($"{_settings.YandexUrl}{_settings.UpdatesUrl}", HttpCompletionOption.ResponseHeadersRead);
-                using (var contentStream = await response.Content.ReadAsStreamAsync())
-                {
-                    var yandexItem = await JsonSerializer.DeserializeAsync<YandexItem>(contentStream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                    using (var responseStream = await httpClient.GetStreamAsync(yandexItem.File))
-                    {
-                        var updates = await JsonSerializer.DeserializeAsync<IEnumerable<YandexUpdateModel>>(responseStream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                        return Result.Success(updates);
-                    }
-                }
+                using var httpClient = _httpClientFactory.CreateClient("yandexClient");
+                var item = await ReadJsonAsync<YandexItem>(httpClient, $"{_settings.YandexUrl}{_settings.UpdatesUrl}", cancellationToken);
+                ValidateDownloadItem(item);
+                return Result.Success(await ReadJsonAsync<IEnumerable<YandexUpdateModel>>(httpClient, item.File, cancellationToken));
             }
-            catch (System.Exception ex)
+            catch (Exception) when (cancellationToken.IsCancellationRequested) { throw new OperationCanceledException(cancellationToken); }
+            catch (Exception ex)
             {
-                Log.Error("Ошибка при получении обновленй {Error}", ex);
-                return Result.Failure<IEnumerable<YandexUpdateModel>>($"Ошибка при получении обновленй");
+                Log.Error(ex, "Ошибка при получении обновлений");
+                return Result.Failure<IEnumerable<YandexUpdateModel>>("Ошибка при получении обновлений");
             }
         }
 
-        private async Task<Result<DateTime>> GetSubscription(string licenseName, HttpClient httpClient)
+        private async Task<Result<DateTime>> GetSubscription(string licenseName, HttpClient httpClient, CancellationToken cancellationToken)
         {
             try
             {
-                if (licenseName.EndsWith(".ISL"))
-                {
+                if (licenseName.EndsWith(".ISL", StringComparison.OrdinalIgnoreCase))
                     licenseName = licenseName.Substring(0, licenseName.Length - 4);
-                }
 
-                var response = await httpClient.GetAsync($"{_settings.YandexUrl}{_settings.SubscriptionUrl}", HttpCompletionOption.ResponseHeadersRead);
-                using (var contentStream = await response.Content.ReadAsStreamAsync())
-                {
-                    var yandexItem = await JsonSerializer.DeserializeAsync<YandexItem>(contentStream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-                    var path = Path.Combine(appPath, yandexItem.Name);
-                    using (var responseStream = await httpClient.GetStreamAsync(yandexItem.File))
-                    {
-                        var subscriptions = await JsonSerializer.DeserializeAsync<IEnumerable<SubscriptionModel>>(responseStream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true, Converters = { new JsonDateTimeConverter() } });
-                        var subscription = subscriptions.FirstOrDefault(x => x.Number == licenseName.TrimStart('0'));
-                        if (subscription is null)
-                        {
-                            return default;
-                        }
-
-                        return subscription.Date.AddDays(365);
-                    }
-
-                }
+                var item = await ReadJsonAsync<YandexItem>(httpClient, $"{_settings.YandexUrl}{_settings.SubscriptionUrl}", cancellationToken);
+                ValidateDownloadItem(item);
+                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, Converters = { new JsonDateTimeConverter() } };
+                var subscriptions = await ReadJsonAsync<IEnumerable<SubscriptionModel>>(httpClient, item.File, cancellationToken, options);
+                var subscription = subscriptions.FirstOrDefault(x => x.Number == licenseName.TrimStart('0'));
+                return subscription == null ? default(DateTime) : subscription.Date.AddDays(365);
             }
-            catch (System.Exception ex)
+            catch (Exception) when (cancellationToken.IsCancellationRequested) { throw new OperationCanceledException(cancellationToken); }
+            catch (Exception ex)
             {
-                Log.Error("Ошибка при получении файла подписки {Error}", ex);
+                Log.Error(ex, "Ошибка при получении файла подписки");
                 return Result.Failure<DateTime>("Ошибка при получении файла подписки");
             }
         }
 
         // Яндекс отдаёт список файлов папки порциями. Запрашиваем по 1000 штук, пока не получим
         // все: в каждом ответе Яндекс сообщает общее число файлов (Total).
-        private async Task<Result<YandexEmbedded>> GetLicenseResource(HttpClient httpClient)
+        private async Task<Result<YandexEmbedded>> GetLicenseResource(HttpClient httpClient, CancellationToken cancellationToken)
         {
             const int pageSize = 1000;
             try
             {
                 var items = new List<YandexItem>();
-                int total;
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                int? expectedTotal = null;
                 do
                 {
-                    var response = await httpClient.GetAsync($"{_settings.YandexUrl}{_settings.LicenseUrl}&limit={pageSize}&offset={items.Count}", HttpCompletionOption.ResponseHeadersRead);
-                    using (var contentStream = await response.Content.ReadAsStreamAsync())
+                    var url = $"{_settings.YandexUrl}{_settings.LicenseUrl}";
+                    url += (url.Contains("?") ? "&" : "?") + $"limit={pageSize}&offset={items.Count}";
+                    var resource = await ReadJsonAsync<YandexResource>(httpClient, url, cancellationToken);
+                    var page = resource._Embedded;
+                    if (page == null || page.Items == null || page.Total < 0 || page.Offset != items.Count
+                        || page.Items.Length > pageSize || (expectedTotal.HasValue && page.Total != expectedTotal.Value))
+                        throw new InvalidDataException("Некорректная страница списка лицензий.");
+
+                    expectedTotal = page.Total;
+                    if (page.Items.Length > expectedTotal.Value - items.Count
+                        || (page.Items.Length == 0 && items.Count < expectedTotal.Value))
+                        throw new InvalidDataException("Получен неполный список лицензий.");
+
+                    foreach (var item in page.Items)
                     {
-                        var yandexResource = await JsonSerializer.DeserializeAsync<YandexResource>(contentStream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                        var page = yandexResource._Embedded;
-                        total = page.Total;
-                        if (page.Items == null || page.Items.Length == 0)
-                        {
-                            break;
-                        }
-
-                        items.AddRange(page.Items);
+                        if (item == null || string.IsNullOrWhiteSpace(item.Name) || !names.Add(item.Name))
+                            throw new InvalidDataException("Повторяющаяся или некорректная запись списка лицензий.");
                     }
+                    items.AddRange(page.Items);
                 }
-                while (items.Count < total);
+                while (items.Count < expectedTotal.Value);
 
-                return new YandexEmbedded { Items = items.ToArray(), Limit = items.Count, Offset = 0, Total = total };
+                cancellationToken.ThrowIfCancellationRequested();
+                return new YandexEmbedded { Items = items.ToArray(), Limit = items.Count, Offset = 0, Total = expectedTotal.Value };
             }
-            catch (System.Exception ex)
+            catch (Exception) when (cancellationToken.IsCancellationRequested) { throw new OperationCanceledException(cancellationToken); }
+            catch (Exception ex)
             {
-                Log.Error("Ошибка при получении списка лицензий {Error}", ex);
-                return Result.Failure<YandexEmbedded>($"Ошибка при получении списка лицензий");
+                Log.Error(ex, "Ошибка при получении списка лицензий");
+                return Result.Failure<YandexEmbedded>("Не удалось получить полный список лицензий. Повторите операцию.");
             }
         }
 
-        private async Task<Result<string>> DownloadLicenseFile(string licenseName, YandexEmbedded yandexResource, HttpClient httpClient)
+        private async Task<Result<string>> DownloadLicenseFile(string licenseName, YandexEmbedded yandexResource, HttpClient httpClient, CancellationToken cancellationToken)
         {
             try
             {
@@ -355,34 +333,20 @@ namespace A0Utils.Wpf.Services
                     return Result.Failure<string>($"Лицензия {licenseName} не найдена");
                 }
 
-                Directory.CreateDirectory(appPath);
-                var path = Path.Combine(appPath, license.Name);
-
-                using (var responseStream = await httpClient.GetStreamAsync(license.File))
+                long read = 0;
+                DownloadLicenseProgressChanged?.Invoke(this, 0);
+                var path = await DownloadFileAsync(httpClient, license, appPath, bytesRead =>
                 {
-                    using (var fileStream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 8192, useAsync: true))
-                    {
-                        byte[] buffer = new byte[8192];
-                        long totalBytes = license.Size;
-                        long totalRead = 0;
-                        int bytesRead;
-
-                        while ((bytesRead = await responseStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
-                        {
-                            await fileStream.WriteAsync(buffer, 0, bytesRead);
-                            totalRead += bytesRead;
-
-                            if (totalBytes > 0)
-                            {
-                                DownloadLicenseProgressChanged?.Invoke(this, (int)((totalRead * 100) / totalBytes));
-                            }
-                        }
-                    }
-                }
+                    read += bytesRead;
+                    if (license.Size > 0)
+                        DownloadLicenseProgressChanged?.Invoke(this, (int)Math.Min(99, (double)read * 100 / license.Size.Value));
+                }, cancellationToken);
+                DownloadLicenseProgressChanged?.Invoke(this, 100);
 
                 return path;
             }
-            catch (System.Exception ex)
+            catch (Exception) when (cancellationToken.IsCancellationRequested) { throw new OperationCanceledException(cancellationToken); }
+            catch (Exception ex)
             {
                 Log.Error("Ошибка при скачивании лицензии: {Error}", ex.Message);
                 return Result.Failure<string>("Ошибка при скачивании лицензии");
@@ -390,7 +354,7 @@ namespace A0Utils.Wpf.Services
 
         }
 
-        private async Task<Result<string>> DownloadLicenseDescriptionFile(string licenseName, YandexEmbedded yandexResource, HttpClient httpClient)
+        private async Task<Result<string>> DownloadLicenseDescriptionFile(string licenseName, YandexEmbedded yandexResource, HttpClient httpClient, CancellationToken cancellationToken)
         {
             try
             {
@@ -415,41 +379,27 @@ namespace A0Utils.Wpf.Services
                     return Result.Failure<string>($"Фаил с описанием лицензий {licenseName} не найден");
                 }
 
-                Directory.CreateDirectory(appPath);
-                var path = Path.Combine(appPath, description.Name);
-
-                using (var responseStream = await httpClient.GetStreamAsync(description.File))
+                long read = 0;
+                DownloadLicenseProgressChanged?.Invoke(this, 0);
+                var path = await DownloadFileAsync(httpClient, description, appPath, bytesRead =>
                 {
-                    using (var fileStream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 8192, useAsync: true))
-                    {
-                        byte[] buffer = new byte[8192];
-                        long totalBytes = description.Size;
-                        long totalRead = 0;
-                        int bytesRead;
-
-                        while ((bytesRead = await responseStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
-                        {
-                            await fileStream.WriteAsync(buffer, 0, bytesRead);
-                            totalRead += bytesRead;
-
-                            if (totalBytes > 0)
-                            {
-                                DownloadLicenseProgressChanged?.Invoke(this, (int)((totalRead * 100) / totalBytes));
-                            }
-                        }
-                    }
-                }
+                    read += bytesRead;
+                    if (description.Size > 0)
+                        DownloadLicenseProgressChanged?.Invoke(this, (int)Math.Min(99, (double)read * 100 / description.Size.Value));
+                }, cancellationToken);
+                DownloadLicenseProgressChanged?.Invoke(this, 100);
 
                 return path;
             }
-            catch (System.Exception ex)
+            catch (Exception) when (cancellationToken.IsCancellationRequested) { throw new OperationCanceledException(cancellationToken); }
+            catch (Exception ex)
             {
                 Log.Error("Ошибка при сохранении фаила с описанием лицензий: {Error}", ex);
                 return Result.Failure<string>("Ошибка при сохранеии фаила с описанием лицензий");
             }
         }
 
-        private async Task<Result<LicenseInfoModel>> ParseLicenseDescriptionFile(string licenseName, YandexEmbedded yandexResource, HttpClient httpClient)
+        private async Task<Result<LicenseInfoModel>> ParseLicenseDescriptionFile(string licenseName, YandexEmbedded yandexResource, HttpClient httpClient, CancellationToken cancellationToken)
         {
             try
             {
@@ -474,13 +424,17 @@ namespace A0Utils.Wpf.Services
                     return Result.Failure<LicenseInfoModel>($"Фаил с описанием лицензий {licenseName} не найден");
                 }
 
-                var path = Path.Combine(appPath, description.Name);
-
-                using (var responseStream = await httpClient.GetStreamAsync(description.File))
+                ValidateDownloadItem(description);
+                using (var response = await httpClient.GetAsync(description.File, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
+                using (cancellationToken.Register(response.Dispose))
                 {
-                    using (var reader = new StreamReader(responseStream, Encoding.GetEncoding("windows-1251")))
+                    response.EnsureSuccessStatusCode();
+                    using (var responseStream = await response.Content.ReadAsStreamAsync())
+                    using (var buffer = new MemoryStream())
                     {
-                        string content = await reader.ReadToEndAsync();
+                        await responseStream.CopyToAsync(buffer, 81920, cancellationToken);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var content = Encoding.GetEncoding("windows-1251").GetString(buffer.ToArray());
 
                         var a0LicenseResult = ParseHelpers.FindA0LicenseExp(content);
                         if (a0LicenseResult.IsFailure)
@@ -504,12 +458,105 @@ namespace A0Utils.Wpf.Services
                 }
 
             }
-            catch (System.Exception ex)
+            catch (Exception) when (cancellationToken.IsCancellationRequested) { throw new OperationCanceledException(cancellationToken); }
+            catch (Exception ex)
             {
                 Log.Error("Ошибка при скачивании фаила с описанием лицензий: {Error}", ex);
                 return Result.Failure<LicenseInfoModel>("Ошибка при скачивании фаила с описанием лицензий");
             }
         }
+        private static async Task<T> ReadJsonAsync<T>(HttpClient client, string url,
+            CancellationToken cancellationToken, JsonSerializerOptions options = null) where T : class
+        {
+            using (var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
+            using (cancellationToken.Register(response.Dispose))
+            {
+                response.EnsureSuccessStatusCode();
+                using (var stream = await response.Content.ReadAsStreamAsync())
+                {
+                    var value = await JsonSerializer.DeserializeAsync<T>(stream,
+                        options ?? new JsonSerializerOptions { PropertyNameCaseInsensitive = true }, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return value ?? throw new InvalidDataException("Сервер вернул пустые данные.");
+                }
+            }
+        }
+
+        private static void ValidateDownloadItem(YandexItem item)
+        {
+            if (item == null || string.IsNullOrWhiteSpace(item.Name)
+                || item.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+                || item.Name != Path.GetFileName(item.Name) || item.Name.EndsWith(".") || item.Name.EndsWith(" ")
+                || item.Size < 0)
+                throw new InvalidDataException("Некорректное имя или размер файла.");
+
+            var stem = item.Name.Split('.')[0].ToUpperInvariant();
+            if (stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL"
+                || (stem.Length == 4 && (stem.StartsWith("COM") || stem.StartsWith("LPT"))
+                    && stem[3] >= '1' && stem[3] <= '9'))
+                throw new InvalidDataException("Зарезервированное имя файла.");
+
+            if (!Uri.TryCreate(item.File, UriKind.Absolute, out var uri)
+                || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+                throw new InvalidDataException("Некорректная ссылка на файл.");
+        }
+
+        private static async Task<string> DownloadFileAsync(HttpClient client, YandexItem item,
+            string directory, Action<int> onBytesRead, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ValidateDownloadItem(item);
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, item.Name);
+            // Same directory keeps the final move/replacement on the same volume.
+            var temporaryPath = Path.Combine(directory, $".a0utils-{Guid.NewGuid():N}.tmp");
+            try
+            {
+                using (var response = await client.GetAsync(item.File, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
+                using (cancellationToken.Register(response.Dispose))
+                {
+                    response.EnsureSuccessStatusCode();
+                    var contentLength = response.Content.Headers.ContentLength;
+                    if (item.Size.HasValue && contentLength.HasValue && item.Size.Value != contentLength.Value)
+                        throw new InvalidDataException("Размер ответа не совпадает с размером файла.");
+
+                    using (var input = await response.Content.ReadAsStreamAsync())
+                    using (var output = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write,
+                        FileShare.None, 81920, useAsync: true))
+                    {
+                        var buffer = new byte[81920];
+                        long totalRead = 0;
+                        int bytesRead;
+                        while ((bytesRead = await input.ReadAsync(buffer, 0, buffer.Length, cancellationToken)) > 0)
+                        {
+                            totalRead += bytesRead;
+                            if ((item.Size.HasValue && totalRead > item.Size.Value)
+                                || (contentLength.HasValue && totalRead > contentLength.Value))
+                                throw new InvalidDataException("Получено больше данных, чем ожидалось.");
+                            await output.WriteAsync(buffer, 0, bytesRead, cancellationToken);
+                            onBytesRead?.Invoke(bytesRead);
+                        }
+                        if ((item.Size.HasValue && totalRead != item.Size.Value)
+                            || (contentLength.HasValue && totalRead != contentLength.Value))
+                            throw new InvalidDataException("Файл загружен не полностью.");
+                        await output.FlushAsync(cancellationToken);
+                    }
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                if (File.Exists(path))
+                    File.Replace(temporaryPath, path, null);
+                else
+                    File.Move(temporaryPath, path);
+                return path;
+            }
+            finally
+            {
+                try { File.Delete(temporaryPath); }
+                catch (Exception ex) { Log.Warning(ex, "Не удалось удалить временный файл {Path}", temporaryPath); }
+            }
+        }
+
     }
 
     public sealed class YandexResource
@@ -522,7 +569,9 @@ namespace A0Utils.Wpf.Services
     {
         public YandexItem[] Items { get; set; }
         public int Limit { get; set; }
+        [JsonRequired]
         public int Offset { get; set; }
+        [JsonRequired]
         public int Total { get; set; }
     }
 
@@ -530,7 +579,7 @@ namespace A0Utils.Wpf.Services
     {
         public string Name { get; set; }
         public string File { get; set; }
-        public long Size { get; set; }
+        public long? Size { get; set; }
         public long Revision { get; set; }
     }
 }

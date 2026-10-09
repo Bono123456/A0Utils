@@ -24,8 +24,17 @@ namespace A0Utils.Wpf.Services
                 Owner = System.Windows.Application.Current?.MainWindow
             };
 
-            _settingsViewModel.RequestClose += () => dialog.Close();
-            dialog.ShowDialog();
+            void OnRequestClose() => dialog.Close();
+
+            _settingsViewModel.RequestClose += OnRequestClose;
+            try
+            {
+                dialog.ShowDialog();
+            }
+            finally
+            {
+                _settingsViewModel.RequestClose -= OnRequestClose;
+            }
         }
 
         public void ShowLicenseDialog()
@@ -37,8 +46,17 @@ namespace A0Utils.Wpf.Services
                 Owner = System.Windows.Application.Current?.MainWindow
             };
 
-            _licenseViewModel.RequestClose += () => dialog.Close();
-            dialog.ShowDialog();
+            void OnRequestClose() => dialog.Close();
+
+            _licenseViewModel.RequestClose += OnRequestClose;
+            try
+            {
+                dialog.ShowDialog();
+            }
+            finally
+            {
+                _licenseViewModel.RequestClose -= OnRequestClose;
+            }
         }
 
         public void ShowInvoiceRequestDialog(InvoiceRequestViewModel viewModel)
